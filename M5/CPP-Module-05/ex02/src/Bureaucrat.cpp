@@ -6,7 +6,7 @@
 /*   By: mszymcza <mszymcza@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/11/13 10:23:59 by mszymcza          #+#    #+#             */
-/*   Updated: 2025/11/18 13:50:09 by mszymcza         ###   ########.fr       */
+/*   Updated: 2025/11/18 14:37:59 by mszymcza         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -86,3 +86,4 @@ const char* Bureaucrat::GradeTooLowException::what() const throw()
 {
     return "Grade too low!";
 }
+
