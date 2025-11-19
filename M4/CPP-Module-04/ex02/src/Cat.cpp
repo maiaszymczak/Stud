@@ -32,7 +32,7 @@ Cat& Cat::operator=(const Cat& other)
 	{
 		Animal::operator=(other);
 		delete this->brain;
-		this->brain = new Brain(*other.brain);
+		this->brain = other.brain ? new Brain(*other.brain) : NULL;
 	}
 	return *this;
 }

@@ -41,11 +41,13 @@ int main()
 	std::cout << "\n--- Deep Copy Test ---\n" << std::endl;
 	
 	Dog basic;
-	basic.getBrain()->setIdea(0, "Woof!");
+	std::cout << "Empty idea: " << basic.getBrain()->getIdea(0) << std::endl;
 	{
-		Dog tmp = basic;
-		std::cout << "Original idea: " << basic.getBrain()->getIdea(0) << std::endl;
-		std::cout << "Copy idea: " << tmp.getBrain()->getIdea(0) << std::endl;
+		Dog tmp;
+		tmp.getBrain()->setIdea(0, "Woof!");
+		std::cout << "Original idea: " << tmp.getBrain()->getIdea(0) << std::endl;
+		basic = tmp;
 	}
+	std::cout << "Copied idea: " << basic.getBrain()->getIdea(0) << std::endl;
 	return 0;
 }
