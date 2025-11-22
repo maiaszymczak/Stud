@@ -1,0 +1,13 @@
+# Environment variables
+.env
+srcs/.env
+
+# Secrets
+secrets/
+*.txt
+
+# Data volumes
+data/
+
+# Log files
+*.log
