@@ -15,7 +15,7 @@
 int main()
 {
     try {
-        Bureaucrat bob("Bob", 2);
+        Bureaucrat bob("Bob", 3);
         std::cout << bob << std::endl;
         bob.incrementGrade();
         std::cout << bob << std::endl;

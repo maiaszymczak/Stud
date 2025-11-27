@@ -10,8 +10,7 @@
 /*                                                                            */
 /* ************************************************************************** */
 
-#ifndef FORM_HPP
-#define FORM_HPP
+#pragma once
 
 #include <iostream>
 #include <stdexcept>
@@ -55,5 +54,3 @@ class Form
 };
 
 std::ostream& operator<<(std::ostream& os, const Form& form);
-
-#endif
