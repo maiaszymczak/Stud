@@ -96,7 +96,7 @@ bool isValidDate(int year, int month, int day)
     
     int daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
     
-    // Check leap year
+    
     if (month == 2)
     {
         bool isLeap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
@@ -128,7 +128,6 @@ bool parseDateAndValue(const std::string& line, Date& date, double& value, std::
         return false;
     }
     
-    // Trim whitespace from dateStr and valueStr
     size_t start = dateStr.find_first_not_of(" \t\n\r");
     size_t end_pos = dateStr.find_last_not_of(" \t\n\r");
     if (start != std::string::npos && end_pos != std::string::npos)
@@ -149,7 +148,7 @@ bool parseDateAndValue(const std::string& line, Date& date, double& value, std::
         return false;
     }
     
-    // Parse date
+    
     int year, month, day;
     if (sscanf(dateStr.c_str(), "%d-%d-%d", &year, &month, &day) != 3)
     {
@@ -157,7 +156,7 @@ bool parseDateAndValue(const std::string& line, Date& date, double& value, std::
         return false;
     }
     
-    // Validate date
+    
     if (!isValidDate(year, month, day))
     {
         error = "Error: bad input => " + line;
@@ -168,7 +167,7 @@ bool parseDateAndValue(const std::string& line, Date& date, double& value, std::
     date.setMonth(month);
     date.setDay(day);
     
-    // Parse value
+    
     char* end;
     value = strtod(valueStr.c_str(), &end);
     
@@ -178,7 +177,7 @@ bool parseDateAndValue(const std::string& line, Date& date, double& value, std::
         return false;
     }
     
-    // Validate value
+
     if (value < 0)
     {
         error = "Error: not a positive number.";
@@ -217,18 +216,18 @@ void processInputFile(const std::string& inputFilename, const std::map<Date, dou
             continue;
         }
         
-        // Find the closest lower or equal date in the database
+        
         std::map<Date, double>::const_iterator it = dataMap.lower_bound(date);
         
         if (it != dataMap.end() && it->first == date)
         {
-            // Exact match
+            
             double rate = it->second;
             std::cout << date << " => " << amount << " = " << (amount * rate) << std::endl;
         }
         else if (it != dataMap.begin())
         {
-            // Use the closest lower date
+            
             --it;
             double rate = it->second;
             std::cout << date << " => " << amount << " = " << (amount * rate) << std::endl;
