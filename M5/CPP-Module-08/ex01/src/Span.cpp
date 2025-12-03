@@ -1,69 +1,84 @@
 #include "Span.hpp"
+#include <algorithm>
+#include <iostream>
+#include <stdexcept>
+#include <vector>
+#include <numeric>
 
-Span::Span(unsigned int n) : _maxSize(n)
-{
-    std::cout << NGREEN << "Span constructor called with max size: " << n << RESET << std::endl;
+Span::Span() : _tab() {
+  _size = 0;
+  std::cout << GREEN << "Span Default Constructor called" << RESET << std::endl;
 }
 
-Span::Span(const Span &other) : _maxSize(other._maxSize), _numbers(other._numbers)
-{
-    std::cout << BLUE << "Span copy constructor called" << RESET << std::endl;
+Span::Span(unsigned int N) : _size(N) {
+  if (N == 0)
+    throw std::invalid_argument("invalid argument");
+  _tab.reserve(N);
+  std::cout << GREEN << "Span Default Constructor called" << RESET << std::endl;
 }
 
-Span &Span::operator=(const Span &other)
-{
-    if (this != &other)
-    {
-        std::cout << YELLOW << "Span assignment operator called" << RESET << std::endl;
-        _maxSize = other._maxSize;
-        _numbers = other._numbers;
-    }
-    return *this;
+Span::Span(const Span &src) {
+  std::cout << BLUE << "Span Copy Constructor called" << RESET << std::endl;
+  *this = src;
 }
 
-Span::~Span()
-{
-    std::cout << RED << "Span destructor called" << RESET << std::endl;
+Span::~Span() {
+  std::cout << RED << "Span Destructor called " << RESET << std::endl;
 }
 
-void Span::addNumber(int number)
-{
-    if (_numbers.size() >= _maxSize)
-        throw std::overflow_error("Cannot add more numbers, capacity reached");
-    _numbers.push_back(number);
+Span &Span::operator=(const Span &src) {
+  std::cout << PURPLE << "Span Copy Assignment Operator called" << RESET
+            << std::endl;
+  if (this != &src) {
+    this->_size = src._size;
+    this->_tab = src._tab;
+  }
+  return *this;
 }
 
-void Span::addNumbers(std::vector<int>::iterator begin, std::vector<int>::iterator end)
-{
-    if (std::distance(begin, end) + _numbers.size() > static_cast<std::ptrdiff_t>(_maxSize))
-        throw std::overflow_error("Cannot add more numbers, capacity reached");
-    _numbers.insert(_numbers.end(), begin, end);
-}
-unsigned int Span::shortestSpan() const
-{
-    if (_numbers.size() < 2)
-        throw std::logic_error("Not enough numbers to find a span");
-
-    std::vector<int> sortedNumbers = _numbers;
-    std::sort(sortedNumbers.begin(), sortedNumbers.end());
-
-    unsigned int minSpan = std::numeric_limits<unsigned int>::max();
-    for (size_t i = 1; i < sortedNumbers.size(); ++i)
-    {
-        unsigned int span = static_cast<unsigned int>(sortedNumbers[i] - sortedNumbers[i - 1]);
-        if (span < minSpan)
-            minSpan = span;
-    }
-    return minSpan;
+int Span::shortestSpan() {
+  if (_tab.size() < 2)
+    throw std::invalid_argument("empty array");
+  
+  std::vector<int> sorted(_tab);
+  std::sort(sorted.begin(), sorted.end());
+  
+  std::vector<int> differences(sorted.size() - 1);
+  std::adjacent_difference(sorted.begin(), sorted.end(), differences.begin());
+  
+  int shortest = *std::min_element(differences.begin() + 1, differences.end());
+  
+  std::cout << NGREEN << "the shortest span is " << shortest << RESET
+            << std::endl;
+  return shortest;
 }
 
-unsigned int Span::longestSpan() const
-{
-    if (_numbers.size() < 2)
-        throw std::logic_error("Not enough numbers to find a span");
+int Span::longestSpan() {
+  if (_tab.size() < 2)
+    throw std::invalid_argument("empty array");
+  
+  int min = *std::min_element(_tab.begin(), _tab.end());
+  int max = *std::max_element(_tab.begin(), _tab.end());
+  
+  std::cout << NGREEN << "the longest span is " << max - min << RESET
+            << std::endl;
+  return max - min;
+}
 
-    int minNumber = *std::min_element(_numbers.begin(), _numbers.end());
-    int maxNumber = *std::max_element(_numbers.begin(), _numbers.end());
+void Span::addNumber(int nb) {
+  if (_tab.size() < _size) {
+    _tab.push_back(nb);
+    std::cout << NGREEN << nb << " added to list" << RESET << std::endl;
+  } else {
+    throw std::invalid_argument("array is full");
+  }
+}
 
-    return static_cast<unsigned int>(maxNumber - minNumber);
+void Span::addManyNumbers(std::vector<int> &vec) {
+  if (_size - _tab.size() < vec.size())
+    throw std::invalid_argument("not enough space to add Numbers");
+  _tab.insert(_tab.end(), vec.begin(), vec.end());
+  std::cout << NGREEN << "Array added:" << RESET << std::endl;
+  for (std::vector<int>::iterator it = vec.begin(); it != vec.end(); it++)
+    std::cout << GREEN << "[" << *it << "]" << RESET << std::endl;
 }
