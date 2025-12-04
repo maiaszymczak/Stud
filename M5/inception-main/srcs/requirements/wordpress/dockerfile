@@ -1,4 +1,4 @@
-FROM debian:bullseye
+FROM debian:Bookworm
 
 RUN apt update && apt install -y \
     php \

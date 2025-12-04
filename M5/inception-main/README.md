@@ -511,9 +511,9 @@ Docker est une plateforme de containerisation qui permet d'empaqueter une applic
 - **Docker**: Outil pour gérer des containers individuels
 - **Docker Compose**: Outil d'orchestration pour gérer plusieurs containers simultanément avec un fichier de configuration YAML
 
-#### **3. Pourquoi Debian Bullseye comme base ?**
+#### **3. Pourquoi Debian Bookworm comme base ?**
 
-Debian Bullseye est la version stable avant la dernière (Bookworm). C'est une distribution fiable, bien documentée, et compatible avec les exigences du projet.
+Debian Bookworm est la version stable avant la dernière. C'est une distribution fiable, bien documentée, et compatible avec les exigences du projet.
 
 #### **4. Comment fonctionne la communication entre containers ?**
 
@@ -657,6 +657,636 @@ docker exec <wordpress_container_id> wp user update admin --user_pass=nouveaumot
 - [ ] Les variables d'environnement sont sécurisées (pas en clair dans le code)
 - [ ] Le domaine est accessible via le nom configuré
 - [ ] Les logs sont accessibles
+
+---
+
+## 🗄️ Explication détaillée : Script MariaDB entrypoint.sh
+
+### Script complet
+
+```bash
+#!/bin/bash
+
+# create db
+if [ ! -f "/var/lib/mysql/$MYSQL_DATABASE" ]; then 
+    echo CREATING MARIADB
+    mariadb-install-db --user=mysql --datadir=/var/lib/mysql
+    /etc/init.d/mariadb start
+    mariadb -e "CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE}\`;"
+    mariadb -e "CREATE USER IF NOT EXISTS '${MYSQL_USER}'@'%' IDENTIFIED BY '${MYSQL_PASSWD}';"
+    mariadb -e "GRANT ALL PRIVILEGES ON \`${MYSQL_DATABASE}\`.* TO '${MYSQL_USER}'@'%';"
+    mariadb -e "FLUSH PRIVILEGES;"
+    /etc/init.d/mariadb stop
+fi
+exec mariadbd --datadir=/var/lib/mysql
+```
+
+### 🔍 Analyse ligne par ligne
+
+#### 1. Condition d'idempotence
+```bash
+if [ ! -f "/var/lib/mysql/$MYSQL_DATABASE" ]; then
+```
+- **Rôle** : Vérifie si la base de données existe déjà
+- `-f` teste l'existence d'un fichier
+- À la **première exécution** : le dossier n'existe pas → initialisation
+- Aux **redémarrages** : le dossier existe → on saute l'initialisation
+- **Évite de recréer la base et perdre les données à chaque redémarrage**
+
+#### 2. Initialisation de MariaDB
+```bash
+mariadb-install-db --user=mysql --datadir=/var/lib/mysql
+```
+- Crée la structure de base de MariaDB (tables système, utilisateurs)
+- `--user=mysql` : exécute avec l'utilisateur système `mysql`
+- `--datadir=/var/lib/mysql` : où stocker les fichiers de la base
+
+**Résultat** : Création de `/var/lib/mysql/` avec `mysql/`, `performance_schema/`, etc.
+
+#### 3. Démarrage temporaire
+```bash
+/etc/init.d/mariadb start
+```
+- Démarre MariaDB en **mode temporaire** pour exécuter des commandes SQL
+- **Nécessaire** car on a besoin d'un serveur actif pour créer la base et l'utilisateur
+
+#### 4. Création de la base de données
+```bash
+mariadb -e "CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE}\`;"
+```
+- `-e` : exécute une commande SQL directement (sans interface interactive)
+- `IF NOT EXISTS` : évite une erreur si elle existe déjà
+- `${MYSQL_DATABASE}` : variable du `.env` (ex: `wordpress_db`)
+
+**Équivalent manuel** :
+```sql
+mysql> CREATE DATABASE IF NOT EXISTS `wordpress_db`;
+```
+
+#### 5. Création de l'utilisateur
+```bash
+mariadb -e "CREATE USER IF NOT EXISTS '${MYSQL_USER}'@'%' IDENTIFIED BY '${MYSQL_PASSWD}';"
+```
+- `${MYSQL_USER}` : nom de l'utilisateur (ex: `wpuser`)
+- **`@'%'`** : **CRITIQUE** - autorise les connexions depuis **n'importe quel hôte**
+  - `%` = wildcard = tous les hôtes
+  - **Nécessaire** car WordPress est dans un **autre conteneur Docker**
+  - Sans ça : `Access denied for user 'wpuser'@'wordpress'`
+- `IDENTIFIED BY` : définit le mot de passe
+
+**Pourquoi `'%'` et pas `'localhost'` ?**
+
+Dans Docker, les conteneurs communiquent via le réseau :
+```
+wordpress conteneur → mariadb conteneur
+     (IP: 172.18.0.3)      (IP: 172.18.0.2)
+```
+WordPress se connecte **depuis une autre machine** → connexions distantes obligatoires !
+
+#### 6. Attribution des privilèges
+```bash
+mariadb -e "GRANT ALL PRIVILEGES ON \`${MYSQL_DATABASE}\`.* TO '${MYSQL_USER}'@'%';"
+```
+- `GRANT ALL PRIVILEGES` : donne tous les droits (SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, etc.)
+- `ON \`${MYSQL_DATABASE}\`.*` : sur **toutes les tables** (`.*`) de la base `wordpress_db`
+- `TO '${MYSQL_USER}'@'%'` : à l'utilisateur `wpuser` depuis n'importe quel hôte
+
+**Résultat** : L'utilisateur `wpuser` peut tout faire sur `wordpress_db`, mais **rien** sur les autres bases (sécurité).
+
+#### 7. Application des changements
+```bash
+mariadb -e "FLUSH PRIVILEGES;"
+```
+- Force MariaDB à **recharger les tables de privilèges** depuis la base `mysql`
+- Sans ça, les nouveaux droits ne sont pas pris en compte immédiatement
+- **Bonne pratique** après tout `GRANT` ou `CREATE USER`
+
+#### 8. Arrêt du serveur temporaire
+```bash
+/etc/init.d/mariadb stop
+```
+- On a démarré MariaDB **temporairement** pour la configuration
+- Maintenant on va le relancer **proprement** avec `exec mariadbd`
+- Évite d'avoir 2 processus MariaDB en conflit
+
+#### 9. Démarrage définitif
+```bash
+exec mariadbd --datadir=/var/lib/mysql
+```
+**Décomposition** :
+- `exec` : **remplace** le processus actuel (bash) par `mariadbd`
+  - Le processus `mariadbd` devient le **PID 1** du conteneur
+  - Quand `mariadbd` s'arrête → le conteneur s'arrête
+  - Reçoit correctement les signaux Docker (SIGTERM, SIGKILL)
+- `mariadbd` : démon MariaDB (version moderne de `mysqld`)
+- `--datadir=/var/lib/mysql` : utilise les données qu'on vient de créer
+
+**Sans `exec`** :
+```
+PID 1: bash (script)
+  └── PID 42: mariadbd (processus enfant)
+```
+→ Docker envoie les signaux à bash, pas à mariadbd → **problèmes d'arrêt** !
+
+**Avec `exec`** :
+```
+PID 1: mariadbd (remplace bash)
+```
+→ MariaDB reçoit directement les signaux → **arrêt propre** ✅
+
+### 🔄 Flux d'exécution complet
+
+#### Première exécution (base n'existe pas)
+```
+1. Script démarre
+2. Vérifie /var/lib/mysql/wordpress_db → N'EXISTE PAS
+3. ✅ Entre dans le if
+4. Initialise la structure MariaDB
+5. Démarre MariaDB temporairement
+6. Crée la base wordpress_db
+7. Crée l'utilisateur wpuser avec le mot de passe
+8. Donne tous les droits à wpuser sur wordpress_db
+9. Recharge les privilèges
+10. Arrête MariaDB temporaire
+11. Lance MariaDB définitivement
+```
+
+#### Redémarrage (base existe déjà)
+```
+1. Script démarre
+2. Vérifie /var/lib/mysql/wordpress_db → EXISTE
+3. ❌ Saute le if (ne pas recréer la base)
+4. Lance MariaDB définitivement avec les données existantes
+```
+
+### 🔑 Variables d'environnement utilisées
+
+Depuis le fichier `.env` :
+```bash
+MYSQL_DATABASE=wordpress_db      # Nom de la base à créer
+MYSQL_USER=wpuser                # Nom de l'utilisateur
+MYSQL_PASSWD=securepassword123   # Mot de passe de l'utilisateur
+```
+
+Ces variables sont automatiquement injectées dans le conteneur via :
+```yaml
+# docker-compose.yml
+services:
+  mariadb:
+    env_file: .env  # ← Charge les variables
+```
+
+### 🧪 Test manuel
+
+Pour vérifier que ça fonctionne :
+```bash
+# Se connecter au conteneur
+docker exec -it inception-mariadb-1 bash
+
+# Tester la connexion avec l'utilisateur créé
+mysql -u wpuser -p
+# Entrer le mot de passe du .env
+
+# Vérifier les bases accessibles
+SHOW DATABASES;
+# Résultat :
+# +--------------------+
+# | Database           |
+# +--------------------+
+# | information_schema |
+# | wordpress_db       |  ← Notre base
+# +--------------------+
+
+# Utiliser la base
+USE wordpress_db;
+
+# Vérifier les privilèges
+SHOW GRANTS;
+# GRANT ALL PRIVILEGES ON `wordpress_db`.* TO 'wpuser'@'%'
+
+EXIT;
+```
+
+### 🚨 Erreurs courantes
+
+#### "Can't connect to MySQL server"
+- **Cause** : MariaDB n'écoute pas sur `0.0.0.0`
+- **Solution** : Vérifier `my.cnf` :
+  ```ini
+  bind-address = 0.0.0.0  # Pas 127.0.0.1 !
+  ```
+
+#### "Access denied for user 'wpuser'@'wordpress'"
+- **Cause** : L'utilisateur existe mais avec `@'localhost'` au lieu de `@'%'`
+- **Solution** : Recréer l'utilisateur avec `@'%'`
+
+#### Base recréée à chaque redémarrage
+- **Cause** : Volume non monté ou mauvais chemin
+- **Solution** : Vérifier `docker-compose.yml` :
+  ```yaml
+  volumes:
+    - mariadb_data:/var/lib/mysql  # Doit être persistant !
+  ```
+
+### 🛡️ Sécurité
+
+**Ce qui est sécurisé** ✅
+- Mot de passe **jamais en clair** dans le code (variable `$MYSQL_PASSWD`)
+- Utilisateur limité à **une seule base** (pas de droits sur `mysql`, `sys`, etc.)
+- Pas de `root` utilisé pour WordPress
+
+**Ce qui pourrait être amélioré** 🔶
+- `@'%'` autorise **tous les hôtes** → en prod, préciser l'IP : `@'172.18.0.3'`
+- Pas de backup automatique configuré
+
+---
+
+## 📝 Explication détaillée : Script WordPress entrypoint.sh
+
+### Script complet
+
+```bash
+#!/bin/bash
+
+# Création de wp-config.php si absent
+if [ ! -f /var/www/html/wp-config.php ]; then
+  cd /var/www/html 
+  wp core download --allow-root --path="/var/www/html" 
+  wp config create --allow-root \
+          --dbname=$WORDPRESS_DB_NAME \
+          --dbuser=$WORDPRESS_DB_USER  \
+          --dbpass=$WORDPRESS_DB_PASSWD \
+          --url=$DOMAIN_NAME  \
+          --dbhost="mariadb" \
+          --skip-check   \
+          --path="/var/www/html" 
+  wp core install --allow-root \
+          --url=$DOMAIN_NAME  \
+          --title=$DOMAIN_NAME  \
+          --admin_user=$ADMIN_USER  \
+          --admin_password=$ADMIN_PASSWD  \
+          --admin_email=$ADMIN_MAIL  \
+          --path="/var/www/html"
+  wp user create --allow-root $WP_USER $WP_USER_MAIL --user_pass=$WP_USER_PASSWD --path="/var/www/html"
+  wp theme install zigcy-lite  --allow-root --path="/var/www/html"
+  wp theme activate zigcy-lite  --allow-root --path="/var/www/html"
+  wp config set WP_HOME "https://$DOMAIN_NAME" --allow-root
+  wp config set WP_SITEURL "https://$DOMAIN_NAME" --allow-root
+  wp search-replace "http://$DOMAIN_NAME" "https://$DOMAIN_NAME" --all-tables --allow-root
+  wp cache flush --allow-root
+fi
+chown -R www-data:www-data /var/www/html
+mkdir -p /run/php
+exec php-fpm7.4 -F
+```
+
+### 🔍 Analyse ligne par ligne
+
+#### 1. Condition d'idempotence
+```bash
+if [ ! -f /var/www/html/wp-config.php ]; then
+```
+- **Rôle** : Vérifie si WordPress est déjà installé
+- `-f` teste l'existence du fichier `wp-config.php`
+- À la **première exécution** : fichier absent → installation complète
+- Aux **redémarrages** : fichier présent → on saute l'installation
+- **Évite de réinstaller WordPress et perdre le contenu**
+
+#### 2. Changement de répertoire
+```bash
+cd /var/www/html
+```
+- Se place dans le répertoire web racine
+- Requis pour que WP-CLI travaille au bon endroit
+
+#### 3. Téléchargement de WordPress
+```bash
+wp core download --allow-root --path="/var/www/html"
+```
+- **`wp`** : WP-CLI, outil officiel WordPress en ligne de commande
+- `core download` : télécharge les fichiers WordPress (dernière version stable)
+- `--allow-root` : autorise l'exécution en tant que root (nécessaire dans Docker)
+- `--path` : où installer les fichiers
+
+**Résultat** : Télécharge `wp-admin/`, `wp-content/`, `wp-includes/`, `index.php`, etc.
+
+#### 4. Création du fichier de configuration
+```bash
+wp config create --allow-root \
+        --dbname=$WORDPRESS_DB_NAME \
+        --dbuser=$WORDPRESS_DB_USER  \
+        --dbpass=$WORDPRESS_DB_PASSWD \
+        --url=$DOMAIN_NAME  \
+        --dbhost="mariadb" \
+        --skip-check   \
+        --path="/var/www/html"
+```
+- `config create` : génère le fichier `wp-config.php`
+- `--dbname` : nom de la base de données (ex: `wordpress_db`)
+- `--dbuser` : utilisateur MySQL (ex: `wpuser`)
+- `--dbpass` : mot de passe de la base
+- `--url` : URL du site (ex: `mszymcza.42.fr`)
+- **`--dbhost="mariadb"`** : **IMPORTANT** - nom du service Docker, pas `localhost` !
+  - Docker résout automatiquement `mariadb` en adresse IP du conteneur
+- `--skip-check` : ne teste pas la connexion maintenant (MariaDB peut ne pas être prêt)
+
+**Équivalent manuel** :
+```php
+// wp-config.php
+define('DB_NAME', 'wordpress_db');
+define('DB_USER', 'wpuser');
+define('DB_PASSWORD', 'securepassword123');
+define('DB_HOST', 'mariadb');
+```
+
+#### 5. Installation de WordPress
+```bash
+wp core install --allow-root \
+        --url=$DOMAIN_NAME  \
+        --title=$DOMAIN_NAME  \
+        --admin_user=$ADMIN_USER  \
+        --admin_password=$ADMIN_PASSWD  \
+        --admin_email=$ADMIN_MAIL  \
+        --path="/var/www/html"
+```
+- `core install` : initialise la base de données et crée le compte admin
+- `--url` : URL du site
+- `--title` : titre du site WordPress
+- `--admin_user` : nom d'utilisateur administrateur
+- `--admin_password` : mot de passe admin
+- `--admin_email` : email de l'admin
+
+**Ce que ça fait** :
+- Crée les tables WordPress dans la base (`wp_posts`, `wp_users`, etc.)
+- Insère l'utilisateur administrateur
+- Configure les paramètres de base
+
+**Sans WP-CLI**, il faudrait :
+1. Ouvrir le navigateur
+2. Remplir le formulaire d'installation
+3. Créer l'admin manuellement
+
+#### 6. Création d'un utilisateur standard
+```bash
+wp user create --allow-root $WP_USER $WP_USER_MAIL --user_pass=$WP_USER_PASSWD --path="/var/www/html"
+```
+- `user create` : crée un nouvel utilisateur WordPress
+- `$WP_USER` : nom d'utilisateur (ex: `normaluser`)
+- `$WP_USER_MAIL` : email de l'utilisateur
+- `--user_pass` : mot de passe de l'utilisateur
+
+**Pourquoi ?** Le sujet impose de créer **au moins 2 utilisateurs** :
+- 1 admin (créé par `core install`)
+- 1 utilisateur standard (créé ici)
+
+#### 7. Installation d'un thème
+```bash
+wp theme install zigcy-lite --allow-root --path="/var/www/html"
+```
+- `theme install` : télécharge un thème depuis le répertoire WordPress.org
+- `zigcy-lite` : nom du thème (gratuit et léger)
+
+#### 8. Activation du thème
+```bash
+wp theme activate zigcy-lite --allow-root --path="/var/www/html"
+```
+- `theme activate` : active le thème installé
+- **Résultat** : Le site utilisera ce thème au lieu du thème par défaut
+
+#### 9. Configuration HTTPS - WP_HOME
+```bash
+wp config set WP_HOME "https://$DOMAIN_NAME" --allow-root
+```
+- `config set` : modifie `wp-config.php`
+- `WP_HOME` : URL d'accès au site
+- **Force HTTPS** : `https://` au lieu de `http://`
+
+**Pourquoi ?** Sans ça, WordPress génère des liens HTTP et provoque des erreurs mixtes content.
+
+#### 10. Configuration HTTPS - WP_SITEURL
+```bash
+wp config set WP_SITEURL "https://$DOMAIN_NAME" --allow-root
+```
+- `WP_SITEURL` : URL des fichiers WordPress
+- Généralement identique à `WP_HOME`
+
+**Différence WP_HOME vs WP_SITEURL** :
+- `WP_HOME` : URL du site pour les visiteurs
+- `WP_SITEURL` : URL des fichiers WordPress (admin, assets)
+
+#### 11. Remplacement HTTP → HTTPS dans la base
+```bash
+wp search-replace "http://$DOMAIN_NAME" "https://$DOMAIN_NAME" --all-tables --allow-root
+```
+- `search-replace` : cherche et remplace dans toutes les tables
+- `--all-tables` : parcourt **toutes** les tables de la base
+- **Rôle** : Convertit tous les liens HTTP en HTTPS
+
+**Pourquoi ?** WordPress peut avoir créé des liens HTTP dans :
+- Les articles
+- Les pages
+- Les options
+- Les widgets
+
+#### 12. Vidage du cache
+```bash
+wp cache flush --allow-root
+```
+- `cache flush` : vide tous les caches WordPress
+- **Important** après les modifications pour qu'elles soient prises en compte
+
+#### 13. Sortie du bloc if
+```bash
+fi
+```
+- Fin de la condition `if [ ! -f /var/www/html/wp-config.php ]`
+- Le code suivant s'exécute **à chaque démarrage** (pas seulement la première fois)
+
+#### 14. Attribution des permissions
+```bash
+chown -R www-data:www-data /var/www/html
+```
+- `chown -R` : change le propriétaire récursivement
+- `www-data:www-data` : utilisateur et groupe utilisés par NGINX et PHP-FPM
+- **Nécessaire** pour que PHP-FPM puisse lire/écrire les fichiers WordPress
+
+**Sans ça** : Erreurs de permissions, impossible de téléverser des médias, installer des plugins, etc.
+
+#### 15. Création du répertoire runtime PHP
+```bash
+mkdir -p /run/php
+```
+- Crée le dossier `/run/php` si absent
+- `-p` : ne renvoie pas d'erreur si le dossier existe
+- **Requis** pour que PHP-FPM puisse créer son socket Unix
+
+#### 16. Démarrage de PHP-FPM
+```bash
+exec php-fpm7.4 -F
+```
+- `exec` : **remplace** le processus bash par PHP-FPM
+  - PHP-FPM devient le **PID 1** du conteneur
+  - Quand PHP-FPM s'arrête → le conteneur s'arrête
+  - Reçoit correctement les signaux Docker
+- `php-fpm7.4` : démon PHP FastCGI Process Manager
+- `-F` : mode **foreground** (ne se met pas en arrière-plan)
+
+**Sans `-F`** : PHP-FPM se lance en daemon et le conteneur s'arrête immédiatement.
+
+### 🔄 Flux d'exécution complet
+
+#### Première exécution (WordPress non installé)
+```
+1. Script démarre
+2. Vérifie /var/www/html/wp-config.php → N'EXISTE PAS
+3. ✅ Entre dans le if
+4. Télécharge WordPress (fichiers core)
+5. Crée wp-config.php avec les infos de connexion DB
+6. Installe WordPress (crée les tables, admin)
+7. Crée l'utilisateur standard
+8. Installe le thème zigcy-lite
+9. Active le thème
+10. Configure HTTPS dans wp-config.php
+11. Remplace tous les liens HTTP → HTTPS dans la DB
+12. Vide le cache
+13. Change les permissions des fichiers
+14. Crée /run/php
+15. Lance PHP-FPM définitivement
+```
+
+#### Redémarrage (WordPress déjà installé)
+```
+1. Script démarre
+2. Vérifie /var/www/html/wp-config.php → EXISTE
+3. ❌ Saute le if (ne pas réinstaller)
+4. Change les permissions des fichiers
+5. Crée /run/php
+6. Lance PHP-FPM avec la config existante
+```
+
+### 🔑 Variables d'environnement utilisées
+
+Depuis le fichier `.env` :
+```bash
+DOMAIN_NAME=mszymcza.42.fr
+
+# Base de données WordPress
+WORDPRESS_DB_NAME=wordpress_db
+WORDPRESS_DB_USER=wpuser
+WORDPRESS_DB_PASSWD=securepassword123
+
+# Administrateur WordPress
+ADMIN_USER=mszymcza
+ADMIN_PASSWD=admin_password123
+ADMIN_MAIL=mszymcza@student.42.fr
+
+# Utilisateur standard WordPress
+WP_USER=normaluser
+WP_USER_MAIL=user@example.com
+WP_USER_PASSWD=user_password123
+```
+
+Ces variables sont injectées via :
+```yaml
+# docker-compose.yml
+services:
+  wordpress:
+    env_file: .env
+```
+
+### 🧪 Test manuel
+
+Pour vérifier que ça fonctionne :
+```bash
+# Vérifier que WordPress est installé
+docker exec inception-wordpress-1 ls -la /var/www/html/
+# Doit contenir : wp-config.php, wp-admin/, wp-content/, etc.
+
+# Vérifier les utilisateurs WordPress
+docker exec inception-wordpress-1 wp user list --allow-root --path="/var/www/html"
+# Doit afficher 2 utilisateurs : admin et normaluser
+
+# Vérifier le thème actif
+docker exec inception-wordpress-1 wp theme list --allow-root --path="/var/www/html"
+# zigcy-lite doit être marqué "active"
+
+# Vérifier les URLs HTTPS
+docker exec inception-wordpress-1 wp option get home --allow-root --path="/var/www/html"
+# Résultat : https://mszymcza.42.fr
+
+docker exec inception-wordpress-1 wp option get siteurl --allow-root --path="/var/www/html"
+# Résultat : https://mszymcza.42.fr
+```
+
+### 🚨 Erreurs courantes
+
+#### "Error establishing a database connection"
+- **Cause** : WordPress ne peut pas se connecter à MariaDB
+- **Solutions** :
+  - Vérifier que MariaDB est démarré : `docker ps`
+  - Vérifier `--dbhost="mariadb"` (nom du service, pas IP)
+  - Vérifier les credentials dans `.env`
+  - Tester la connexion : `docker exec wordpress-1 nc -zv mariadb 3306`
+
+#### "Sorry, you are not allowed to access this page"
+- **Cause** : Problèmes de permissions
+- **Solution** : Relancer `chown -R www-data:www-data /var/www/html`
+
+#### WordPress se réinstalle à chaque redémarrage
+- **Cause** : Volume non monté, `wp-config.php` disparaît
+- **Solution** : Vérifier `docker-compose.yml` :
+  ```yaml
+  volumes:
+    - wordpress_data:/var/www/html
+  ```
+
+#### Le thème par défaut est utilisé au lieu de zigcy-lite
+- **Cause** : Le thème n'a pas été activé
+- **Solution** : Activer manuellement :
+  ```bash
+  docker exec wordpress-1 wp theme activate zigcy-lite --allow-root
+  ```
+
+#### Erreur "mixed content" (HTTP/HTTPS)
+- **Cause** : Certains liens sont encore en HTTP
+- **Solution** : Relancer le search-replace :
+  ```bash
+  docker exec wordpress-1 wp search-replace "http://mszymcza.42.fr" "https://mszymcza.42.fr" --all-tables --allow-root
+  ```
+
+### 🛡️ Sécurité
+
+**Ce qui est sécurisé** ✅
+- Mots de passe **jamais en clair** dans le code (variables d'environnement)
+- Utilisateur admin **sans le mot "admin"** dans le nom (requis par le sujet)
+- HTTPS forcé partout
+- Permissions correctes (`www-data`)
+
+**Ce qui pourrait être amélioré** 🔶
+- Désactiver l'éditeur de thèmes/plugins dans `wp-config.php`
+- Limiter les tentatives de connexion (plugin de sécurité)
+- Configurer les clés de sécurité WordPress (salt)
+- Désactiver XML-RPC si non utilisé
+
+### 📦 Pourquoi WP-CLI ?
+
+**Avantages de WP-CLI** :
+- ✅ **Automatisation complète** : pas d'interaction manuelle
+- ✅ **Idempotent** : peut être relancé sans problème
+- ✅ **Rapide** : installation en quelques secondes
+- ✅ **Scriptable** : parfait pour Docker et CI/CD
+- ✅ **Officiel** : maintenu par WordPress.org
+
+**Sans WP-CLI**, il faudrait :
+1. Copier manuellement les fichiers WordPress
+2. Créer `wp-config.php` à la main
+3. Ouvrir le navigateur pour l'installation
+4. Remplir le formulaire
+5. Se connecter pour créer le 2e utilisateur
+6. Installer et activer le thème manuellement
+7. Modifier les URLs en base de données avec SQL
+
+→ **Impossible à automatiser proprement !**
 
 ---
 
