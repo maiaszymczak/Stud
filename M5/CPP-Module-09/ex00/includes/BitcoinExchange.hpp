@@ -29,8 +29,6 @@ class Date
         void setYear(int y);
         void setMonth(int m);
         void setDay(int d);
-        
-        friend std::ostream& operator<<(std::ostream& os, const Date& date);
 };
 std::ostream& operator<<(std::ostream& os, const Date& date);
 std::map<Date, double> loadDataFromCSV(const std::string& filename);

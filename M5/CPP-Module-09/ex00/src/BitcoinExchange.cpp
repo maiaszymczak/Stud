@@ -49,11 +49,11 @@ void Date::setDay(int d) { day = d; }
 
 std::ostream& operator<<(std::ostream& os, const Date& date)
 {
-    os << date.year << "-";
-    if (date.month < 10) os << "0";
-    os << date.month << "-";
-    if (date.day < 10) os << "0";
-    os << date.day;
+    os << date.getYear() << "-";
+    if (date.getMonth() < 10) os << "0";
+    os << date.getMonth() << "-";
+    if (date.getDay() < 10) os << "0";
+    os << date.getDay();
     return os;
 }
 
