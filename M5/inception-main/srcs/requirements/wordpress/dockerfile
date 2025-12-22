@@ -18,7 +18,7 @@ mv wp-cli.phar /usr/local/bin/wp
 
 EXPOSE 9000
 
-COPY www.conf /etc/php/7.4/fpm/pool.d
+COPY www.conf /etc/php/8.2/fpm/pool.d
 
 # copy and run entrypoint
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
