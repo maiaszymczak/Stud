@@ -1,1 +1,1 @@
-team mate : [https://git.adrienheisch.com](https://github.com/AdrienHeisch)
+team mate : https://github.com/AdrienHeisch
